@@ -6,6 +6,23 @@ proc parseConfig(confPath: string): Config =
   var configDef = loadConfig(confPath)
   return configDef
 
+proc printHelp() =
+  echo """
+  stirup 
+  
+  USAGE
+  -----
+    
+    $ stirup 
+    # ^ will look for configuration at ./stirup.ini, or 
+    
+    $ stirup ./path/to/config.ini
+
+  --prepare, p    Run the prepare script from the configuration 
+                  ( actions -> prepare ) before running the execute script
+  --help, h       Display this help menu
+  """
+
 type
   StirupConfig* = object
     configPath, user, host, port: string
@@ -48,23 +65,33 @@ proc execScript(sc: var StirupConfig) =
       readFile(toExecute)], options = {poUsePath, poParentStreams})
     doAssert execTask.waitForExit == 0
 
-proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string, val: string) =
+
+proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string, val: string):bool =
   case kind
     of cmdEnd: return
     of cmdLongOption, cmdShortOption: 
+      if key == "help" or key == "h":
+          printHelp()
+          return;
       if key == "prepare" or key == "p":
           sc.runPrepare = true
     of cmdArgument:
       sc.configPath = key
   if len(sc.configPath) == 0:
     sc.configPath = "./stirup.ini"
+  return true
 
 
 proc main() =
   var flagParser = initOptParser()
   var config: StirupConfig
+  var run: bool 
   for kind, key, val in flagParser.getopt():
-    config.parseFlags(kind, key, val)
+    run = config.parseFlags(kind, key, val)
+
+
+  if not run:
+    return
 
   config.loadConfig()
   config.ping()
