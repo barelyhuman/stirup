@@ -2,9 +2,6 @@ import osproc
 import system/io
 import std/[parsecfg, os, parseopt]
 
-proc parseConfig(confPath: string): Config =
-  var configDef = loadConfig(confPath)
-  return configDef
 
 proc printHelp() =
   echo """
@@ -23,6 +20,16 @@ proc printHelp() =
   --help, h       Display this help menu
   """
 
+proc parseConfig(confPath: string): Config =
+  try:
+    var configDef = loadConfig(confPath)
+    return configDef
+  except:
+    let e = getCurrentExceptionMsg()
+    printHelp()
+    quit "Error: failed to open the config file, make sure you have one\n\nfailure msg: " & e,1
+
+
 type
   StirupConfig* = object
     configPath, user, host, port: string
@@ -30,12 +37,19 @@ type
     runPrepare: bool
 
 proc loadConfig*(sc: var StirupConfig) =
+
+  # default path for config if none was provided
+  if len(sc.configPath) == 0:
+    sc.configPath = "./stirup.ini"
+
   var configDefs = parseConfig(sc.configPath)
   setCurrentDir(parentDir(sc.configPath))
   sc.definitions = configDefs
   sc.user = configDefs.getSectionValue("connection", "user")
   sc.host = configDefs.getSectionValue("connection", "host")
   sc.port = configDefs.getSectionValue("connection", "port")
+
+  
 
 proc getHostUrl(sc: var StirupConfig): string =
   return sc.user&"@"&sc.host
@@ -55,7 +69,8 @@ proc readFile(filepath: string): string =
 proc execScript(sc: var StirupConfig) =
   if sc.runPrepare:
     var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
-    var prepareTask = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
+    var prepareTask = startProcess("ssh", args = [sc.getHostUrl(),
+        sc.getPortFlag(),
       readFile(prepareScript)], options = {poUsePath, poParentStreams})
     doAssert prepareTask.waitForExit == 0
 
@@ -66,29 +81,27 @@ proc execScript(sc: var StirupConfig) =
     doAssert execTask.waitForExit == 0
 
 
-proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string, val: string):bool =
+proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string,
+    val: string): bool =
   case kind
-    of cmdEnd: return
-    of cmdLongOption, cmdShortOption: 
+    of cmdEnd: return true
+    of cmdLongOption, cmdShortOption:
       if key == "help" or key == "h":
-          printHelp()
-          return;
+        printHelp()
+        return;
       if key == "prepare" or key == "p":
-          sc.runPrepare = true
+        sc.runPrepare = true
     of cmdArgument:
       sc.configPath = key
-  if len(sc.configPath) == 0:
-    sc.configPath = "./stirup.ini"
   return true
 
 
 proc main() =
   var flagParser = initOptParser()
   var config: StirupConfig
-  var run: bool 
+  var run = true
   for kind, key, val in flagParser.getopt():
     run = config.parseFlags(kind, key, val)
-
 
   if not run:
     return
