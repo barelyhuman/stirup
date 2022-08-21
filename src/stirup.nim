@@ -10,6 +10,7 @@ type
   StirupConfig* = object
     configPath, user, host, port: string
     definitions: Config
+    runPrepare: bool
 
 proc loadConfig*(sc: var StirupConfig) =
   var configDefs = parseConfig(sc.configPath)
@@ -35,16 +36,24 @@ proc readFile(filepath: string): string =
   return fd.readAll()
 
 proc execScript(sc: var StirupConfig) =
+  if sc.runPrepare:
+    var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
+    var prepareTask = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
+      readFile(prepareScript)], options = {poUsePath, poParentStreams})
+    doAssert prepareTask.waitForExit == 0
+
   var toExecute = sc.definitions.getSectionValue("actions", "execute")
-  var p = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
+  if toExecute != "":
+    var execTask = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
       readFile(toExecute)], options = {poUsePath, poParentStreams})
-  doAssert p.waitForExit == 0
+    doAssert execTask.waitForExit == 0
 
 proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string, val: string) =
   case kind
     of cmdEnd: return
-    # left as a separate case if I add something later
-    of cmdLongOption, cmdShortOption: return
+    of cmdLongOption, cmdShortOption: 
+      if key == "prepare" or key == "p":
+          sc.runPrepare = true
     of cmdArgument:
       sc.configPath = key
   if len(sc.configPath) == 0:
