@@ -2,6 +2,19 @@ import osproc
 import system/io
 import std/[parsecfg, os, parseopt]
 
+type
+  ExecutionStage = enum
+    prePrepare, postPrepare, preExecute, postExecute
+  Artifact* = object
+    path: string
+    stage: ExecutionStage
+    archive: bool
+  StirupConfig* = object
+    configPath, user, host, port: string
+    definitions: Config
+    runPrepare: bool
+    artifactCount: int
+    artifacts: seq[Artifact]
 
 proc printHelp() =
   echo """
@@ -27,14 +40,8 @@ proc parseConfig(confPath: string): Config =
   except:
     let e = getCurrentExceptionMsg()
     printHelp()
-    quit "Error: failed to open the config file, make sure you have one\n\nfailure msg: " & e,1
+    quit "Error: failed to open the config file, make sure you have one\n\nfailure msg: " & e, 1
 
-
-type
-  StirupConfig* = object
-    configPath, user, host, port: string
-    definitions: Config
-    runPrepare: bool
 
 proc loadConfig*(sc: var StirupConfig) =
 
@@ -49,7 +56,7 @@ proc loadConfig*(sc: var StirupConfig) =
   sc.host = configDefs.getSectionValue("connection", "host")
   sc.port = configDefs.getSectionValue("connection", "port")
 
-  
+
 
 proc getHostUrl(sc: var StirupConfig): string =
   return sc.user&"@"&sc.host
@@ -67,7 +74,7 @@ proc readFile(filepath: string): string =
   return fd.readAll()
 
 
-proc execPrepare(sc: var StirupConfig)=
+proc execPrepare(sc: var StirupConfig) =
   var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
   var prepareTask = startProcess("ssh", args = [sc.getHostUrl(),
       sc.getPortFlag(),
@@ -96,6 +103,40 @@ proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string,
       sc.configPath = key
   return true
 
+proc loadArtifactDetails(sc: var StirupConfig) =
+  var artifactCount = 1
+
+  while true:
+    var sectionKey = "artifact_" & $artifactCount
+    var pathValue = sc.definitions.getSectionValue(sectionKey, "path")
+    if len(pathValue) == 0:
+      break
+
+    var executionStage = sc.definitions.getSectionValue(sectionKey, "stage")
+    var artifact = Artifact()
+    artifact.path = pathValue
+
+    case executionStage
+      of "pre_prepare":
+        artifact.stage = prePrepare
+      of "post_prepare":
+        artifact.stage = postPrepare
+      of "pre_execute":
+        artifact.stage = preExecute
+      of "post_execute":
+        artifact.stage = postExecute
+
+    var createArchive = sc.definitions.getSectionValue(sectionKey, "archive")
+    artifact.archive = false
+    if createArchive == "true":
+      artifact.archive = true
+
+    sc.artifacts.add(artifact)
+
+    artifactCount+=1
+
+  sc.artifactCount = artifactCount
+
 
 proc main() =
   var flagParser = initOptParser()
@@ -108,6 +149,7 @@ proc main() =
     return
 
   config.loadConfig()
+  config.loadArtifactDetails()
   config.ping()
   if config.runPrepare:
     config.execPrepare()
