@@ -66,14 +66,15 @@ proc readFile(filepath: string): string =
   var fd = open(filepath)
   return fd.readAll()
 
-proc execScript(sc: var StirupConfig) =
-  if sc.runPrepare:
-    var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
-    var prepareTask = startProcess("ssh", args = [sc.getHostUrl(),
-        sc.getPortFlag(),
-      readFile(prepareScript)], options = {poUsePath, poParentStreams})
-    doAssert prepareTask.waitForExit == 0
 
+proc execPrepare(sc: var StirupConfig)=
+  var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
+  var prepareTask = startProcess("ssh", args = [sc.getHostUrl(),
+      sc.getPortFlag(),
+    readFile(prepareScript)], options = {poUsePath, poParentStreams})
+  doAssert prepareTask.waitForExit == 0
+
+proc execScript(sc: var StirupConfig) =
   var toExecute = sc.definitions.getSectionValue("actions", "execute")
   if toExecute != "":
     var execTask = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
@@ -108,6 +109,8 @@ proc main() =
 
   config.loadConfig()
   config.ping()
+  if config.runPrepare:
+    config.execPrepare()
   config.execScript()
 
 
