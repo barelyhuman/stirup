@@ -2,7 +2,7 @@
 
 set -euxo pipefail
 
-echo "setting up node..."
+cat ~/msg.txt
 
 # curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
 

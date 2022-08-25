@@ -6,14 +6,13 @@ type
   ExecutionStage = enum
     prePrepare, postPrepare, preExecute, postExecute
   Artifact* = object
-    path: string
+    path, destination: string
     stage: ExecutionStage
     archive: bool
   StirupConfig* = object
     configPath, user, host, port: string
     definitions: Config
     runPrepare: bool
-    artifactCount: int
     artifacts: seq[Artifact]
 
 proc printHelp() =
@@ -42,9 +41,40 @@ proc parseConfig(confPath: string): Config =
     printHelp()
     quit "Error: failed to open the config file, make sure you have one\n\nfailure msg: " & e, 1
 
+proc readFile(filepath: string): string =
+  var fd = open(filepath)
+  var data = fd.readAll()
+  fd.close()
+  return data
+
+proc scp(source: string, destination: string, host: string, port: string) =
+  echo [port, source, host&":"&destination]
+  var exec = startProcess("scp", args = [port, source, host&":"&destination],
+      options = {poUsePath, poParentStreams})
+  var exitCode = exec.waitForExit
+  if exitCode != 0:
+    quit "exited with code:" & $exitCode
+
+proc sshExec(host: string, port: string, script: string = "",
+    ping: bool = false) =
+  var args: seq[string];
+
+  args.add(host)
+  args.add("-p"&port)
+
+  if ping:
+    echo "['stirup-local'] Pinging SSH Server..."
+    args.add("echo '[stirup-ssh] Ping'")
+  elif len(script) > 0:
+    args.add(readFile(script))
+
+  var exec = startProcess("ssh", args = args, options = {poUsePath,
+      poParentStreams})
+  var exitCode = exec.waitForExit
+  if exitCode != 0:
+    quit "exited with code:" & $exitCode
 
 proc loadConfig*(sc: var StirupConfig) =
-
   # default path for config if none was provided
   if len(sc.configPath) == 0:
     sc.configPath = "./stirup.ini"
@@ -56,37 +86,27 @@ proc loadConfig*(sc: var StirupConfig) =
   sc.host = configDefs.getSectionValue("connection", "host")
   sc.port = configDefs.getSectionValue("connection", "port")
 
-
-
 proc getHostUrl(sc: var StirupConfig): string =
   return sc.user&"@"&sc.host
 
-proc getPortFlag(sc: var StirupConfig): string =
-  return "-p "&sc.port
-
 proc ping(sc: var StirupConfig) =
-  var p = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
-      "echo 'ping'"], options = {poUsePath, poParentStreams})
-  doAssert p.waitForExit == 0
-
-proc readFile(filepath: string): string =
-  var fd = open(filepath)
-  return fd.readAll()
-
+  sshExec(ping = true, host = sc.getHostUrl(), port = sc.port)
 
 proc execPrepare(sc: var StirupConfig) =
   var prepareScript = sc.definitions.getSectionValue("actions", "prepare")
-  var prepareTask = startProcess("ssh", args = [sc.getHostUrl(),
-      sc.getPortFlag(),
-    readFile(prepareScript)], options = {poUsePath, poParentStreams})
-  doAssert prepareTask.waitForExit == 0
+
+  if prepareScript == "":
+    return
+
+  sshExec(host = sc.getHostUrl(), port = sc.port, script = prepareScript)
 
 proc execScript(sc: var StirupConfig) =
   var toExecute = sc.definitions.getSectionValue("actions", "execute")
-  if toExecute != "":
-    var execTask = startProcess("ssh", args = [sc.getHostUrl(), sc.getPortFlag(),
-      readFile(toExecute)], options = {poUsePath, poParentStreams})
-    doAssert execTask.waitForExit == 0
+
+  if toExecute == "":
+    return
+
+  sshExec(host = sc.getHostUrl(), port = sc.port, script = toExecute)
 
 
 proc parseFlags(sc: var StirupConfig, kind: CmdLineKind, key: string,
@@ -109,12 +129,15 @@ proc loadArtifactDetails(sc: var StirupConfig) =
   while true:
     var sectionKey = "artifact_" & $artifactCount
     var pathValue = sc.definitions.getSectionValue(sectionKey, "path")
-    if len(pathValue) == 0:
+
+    var destPathValue = sc.definitions.getSectionValue(sectionKey, "destination")
+    if len(pathValue) == 0 or len(destPathValue) == 0:
       break
 
     var executionStage = sc.definitions.getSectionValue(sectionKey, "stage")
     var artifact = Artifact()
     artifact.path = pathValue
+    artifact.destination = destPathValue
 
     case executionStage
       of "pre_prepare":
@@ -135,8 +158,55 @@ proc loadArtifactDetails(sc: var StirupConfig) =
 
     artifactCount+=1
 
-  sc.artifactCount = artifactCount
+proc getSCPPortFlag(sc: var StirupConfig): string =
+  return "-P "&sc.port
 
+
+proc copyPrePrepareArtifacts(sc: var StirupConfig) =
+  let hostUrl = sc.getHostUrl()
+  let portFlag = sc.getSCPPortFlag()
+  for i in countup(0, sc.artifacts.len-1):
+    echo "i:" & $i
+    let artifact = sc.artifacts[i]
+
+    if artifact.stage != prePrepare:
+      continue
+
+    scp(artifact.path, artifact.destination, hostUrl, portFlag)
+
+
+proc copyPostPrepareArtifacts(sc: var StirupConfig) =
+  let hostUrl = sc.getHostUrl()
+  let portFlag = sc.getSCPPortFlag()
+
+  for i in countup(0, sc.artifacts.len-1):
+    let artifact = sc.artifacts[i]
+    if artifact.stage != postPrepare:
+      continue
+
+    scp(artifact.path, artifact.destination, hostUrl, portFlag)
+
+proc copyPreExecuteArtifacts(sc: var StirupConfig) =
+  let hostUrl = sc.getHostUrl()
+  let portFlag = sc.getSCPPortFlag()
+
+  for i in countup(0, sc.artifacts.len-1):
+    let artifact = sc.artifacts[i]
+    if artifact.stage != preExecute:
+      continue
+
+    scp(artifact.path, artifact.destination, hostUrl, portFlag)
+
+proc copyPostExecuteArtifacts(sc: var StirupConfig) =
+  let hostUrl = sc.getHostUrl()
+  let portFlag = sc.getSCPPortFlag()
+
+  for i in countup(0, sc.artifacts.len-1):
+    let artifact = sc.artifacts[i]
+    if artifact.stage != postExecute:
+      continue
+
+    scp(artifact.path, artifact.destination, hostUrl, portFlag)
 
 proc main() =
   var flagParser = initOptParser()
@@ -152,8 +222,13 @@ proc main() =
   config.loadArtifactDetails()
   config.ping()
   if config.runPrepare:
+    config.copyPrePrepareArtifacts()
     config.execPrepare()
+    config.copyPostPrepareArtifacts()
+
+  config.copyPreExecuteArtifacts()
   config.execScript()
+  config.copyPostExecuteArtifacts()
 
 
 when isMainModule:
