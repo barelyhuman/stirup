@@ -1,4 +1,0 @@
-make: Entering directory `/Users/sid/code/stirup'
-ls ./src/* | entr nimble run -- ./example/stirup.ini
-make: Leaving directory `/Users/sid/code/stirup'
- 
