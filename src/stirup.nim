@@ -63,7 +63,6 @@ proc sshExec(host: string, port: string, script: string = "",
   args.add("-p"&port)
 
   if ping:
-    echo "['stirup-local'] Pinging SSH Server..."
     args.add("echo '[stirup-ssh] Ping'")
   elif len(script) > 0:
     args.add(readFile(script))
@@ -218,15 +217,19 @@ proc main() =
   if not run:
     return
 
+  echo "[stirup-local] loading config"
   config.loadConfig()
   config.loadArtifactDetails()
+  echo "[stirup-local] pinging ssh server"
   config.ping()
   if config.runPrepare:
     config.copyPrePrepareArtifacts()
+    echo "[stirup-local] executing prepare"
     config.execPrepare()
     config.copyPostPrepareArtifacts()
 
   config.copyPreExecuteArtifacts()
+  echo "[stirup-local] executing script"
   config.execScript()
   config.copyPostExecuteArtifacts()
 
