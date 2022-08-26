@@ -3,4 +3,9 @@
 # the built binary
 /stirup
 
+# ignore the vscode generated settings 
+# don't need them
+.vscode
+/bin
+
 
